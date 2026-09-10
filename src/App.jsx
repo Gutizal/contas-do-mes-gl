@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import BillsTable from "./components/BillsTable";
 import SummaryCards from "./components/SummaryCards";
 import TagManager from "./components/TagManager";
@@ -6,70 +6,46 @@ import AnalyticsTab from "./components/AnalyticsTab";
 import MonthSwitcher from "./components/MonthSwitcher";
 import MonthSetupPrompt from "./components/MonthSetupPrompt";
 import OwlMark from "./components/OwlMark";
-import { emptyMonthsData, makeEmptyBill } from "./data/initialData";
+import { makeEmptyBill } from "./data/initialData";
 import { exportCSV, exportPDF } from "./export";
 import { useAuth } from "./auth/AuthContext";
 import LoginScreen from "./auth/LoginScreen";
 import UserManager from "./auth/UserManager";
 import { currentMonthKey, monthKeyLabel, sortMonthKeys, monthKeyShort, shiftMonthKey, findPreviousExistingMonth } from "./monthUtils";
 import { effectiveValue } from "./utils";
-
-const STORAGE_KEY = "contas-do-mes-v4";
-const LEGACY_KEYS = ["contas-do-mes-v3", "contas-do-mes-v2"];
-
-function migrateLegacy() {
-  for (const legacyKey of LEGACY_KEYS) {
-    try {
-      const raw = localStorage.getItem(legacyKey);
-      if (!raw) continue;
-      const old = JSON.parse(raw);
-      const addStatus = (bills) => bills.map((b) => ({ status: "pendente", ...b }));
-      if (old.pessoal?.months || old.empresa?.months) {
-        // v3: já tinha meses, só falta o campo status
-        const fix = (tab) => ({ tags: tab?.tags || emptyMonthsData().tags, months: Object.fromEntries(Object.entries(tab?.months || {}).map(([k, v]) => [k, addStatus(v)])) });
-        return { pessoal: fix(old.pessoal), empresa: fix(old.empresa) };
-      }
-      // v2: uma lista única de contas, joga tudo no mês atual
-      const key = currentMonthKey();
-      const build = (tab) => ({
-        tags: tab?.tags?.length ? tab.tags : emptyMonthsData().tags,
-        months: tab?.bills?.length ? { [key]: addStatus(tab.bills) } : {},
-      });
-      return { pessoal: build(old.pessoal), empresa: build(old.empresa) };
-    } catch (e) {
-      console.warn("Não foi possível migrar dados antigos:", e);
-    }
-  }
-  return null;
-}
-
-function loadInitial() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) {
-    console.warn("Não foi possível ler dados salvos:", e);
-  }
-  return migrateLegacy() || { pessoal: emptyMonthsData(), empresa: emptyMonthsData() };
-}
+import * as cloud from "./data/cloudStore";
 
 function AppShell() {
-  const { currentUser, logout } = useAuth();
-  const [data, setData] = useState(loadInitial);
+  const { currentUser, signOut } = useAuth();
+  const [data, setData] = useState(null);
+  const [loadError, setLoadError] = useState(null);
   const [tab, setTab] = useState("pessoal");
-  const [selectedMonth, setSelectedMonth] = useState(() => {
-    const initial = loadInitial();
-    const keys = sortMonthKeys([...new Set([...Object.keys(initial.pessoal.months), ...Object.keys(initial.empresa.months)])]);
-    return keys.length ? keys[keys.length - 1] : currentMonthKey();
-  });
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthKey());
+  const [monthInitialized, setMonthInitialized] = useState(false);
   const [showTagManager, setShowTagManager] = useState(false);
   const [showUserManager, setShowUserManager] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [data]);
+    let cancelled = false;
+    cloud
+      .loadAll()
+      .then((loaded) => {
+        if (cancelled) return;
+        setData(loaded);
+        const keys = sortMonthKeys([...new Set([...Object.keys(loaded.pessoal.months), ...Object.keys(loaded.empresa.months)])]);
+        setSelectedMonth(keys.length ? keys[keys.length - 1] : currentMonthKey());
+        setMonthInitialized(true);
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!cancelled) setLoadError("Não foi possível carregar seus dados do Supabase. Confira a conexão e recarregue a página.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const showToast = (msg) => {
     setToast(msg);
@@ -81,6 +57,22 @@ function AppShell() {
   const isAnalytics = tab === "analises";
   const activeTab = tab === "empresa" ? "empresa" : "pessoal";
 
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 text-center">
+        <p className="text-sm text-signal-rose max-w-sm">{loadError}</p>
+      </div>
+    );
+  }
+
+  if (!data || !monthInitialized) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <OwlMark size={64} />
+      </div>
+    );
+  }
+
   const allMonthKeys = sortMonthKeys([...new Set([...Object.keys(data.pessoal.months), ...Object.keys(data.empresa.months)])]);
   const monthExists = Boolean(data[activeTab].months[selectedMonth]);
   const currentBills = data[activeTab].months[selectedMonth] || [];
@@ -90,18 +82,50 @@ function AppShell() {
     setData((d) => ({ ...d, [tabKey]: { ...d[tabKey], months: { ...d[tabKey].months, [key]: bills } } }));
 
   const updateBills = (nextBills) => setMonthBills(activeTab, selectedMonth, nextBills);
-  const updateTags = (nextTags) => setData((d) => ({ ...d, [activeTab]: { ...d[activeTab], tags: nextTags } }));
 
-  const handleUpdate = (id, fields) => updateBills(currentBills.map((b) => (b.id === id ? { ...b, ...fields } : b)));
-  const handleRemove = (id) => updateBills(currentBills.filter((b) => b.id !== id));
-  const handleAdd = () => updateBills([...currentBills, makeEmptyBill()]);
+  const updateTags = (nextTags, meta) => {
+    setData((d) => ({ ...d, [activeTab]: { ...d[activeTab], tags: nextTags } }));
+    if (meta?.created) cloud.insertTag(meta.created);
+    else if (meta?.removedId) cloud.deleteTagRemote(meta.removedId);
+    else if (meta?.id) cloud.updateTagRemote(meta.id, meta.fields);
+  };
 
-  const handleStartBlank = () => setMonthBills(activeTab, selectedMonth, []);
+  const handleUpdate = (id, fields) => {
+    updateBills(currentBills.map((b) => (b.id === id ? { ...b, ...fields } : b)));
+    cloud.scheduleBillUpdate(id, fields);
+  };
+
+  const handleRemove = (id) => {
+    updateBills(currentBills.filter((b) => b.id !== id));
+    cloud.deleteBill(id);
+  };
+
+  const handleAdd = () => {
+    const bill = makeEmptyBill(activeTab, selectedMonth);
+    updateBills([...currentBills, bill]);
+    cloud.insertBill(bill);
+  };
+
+  const handleStartBlank = () => {
+    setMonthBills(activeTab, selectedMonth, []);
+    cloud.markMonthStarted(activeTab, selectedMonth);
+  };
 
   const handleCopyFrom = (fromKey) => {
     const source = data[activeTab].months[fromKey] || [];
-    const clone = source.map((b) => ({ ...b, status: "pendente", id: `${b.id}-cp-${Math.random().toString(36).slice(2, 7)}` }));
+    const clone = source.map((b) => makeEmptyBill(activeTab, selectedMonth)).map((fresh, i) => ({
+      ...fresh,
+      description: source[i].description,
+      value: source[i].value,
+      valueMin: source[i].valueMin,
+      valueMax: source[i].valueMax,
+      installmentsLeft: source[i].installmentsLeft,
+      tagId: source[i].tagId,
+      notes: source[i].notes,
+      status: "pendente",
+    }));
     setMonthBills(activeTab, selectedMonth, clone);
+    cloud.markMonthStarted(activeTab, selectedMonth).then(() => cloud.insertBills(clone));
   };
 
   const handlePostpone = (billId) => {
@@ -109,7 +133,7 @@ function AppShell() {
     if (!bill) return;
     const nextKey = shiftMonthKey(selectedMonth, 1);
     const nextBills = data[activeTab].months[nextKey] || [];
-    const moved = { ...bill, status: "pendente", id: `${bill.id}-mv-${Math.random().toString(36).slice(2, 7)}` };
+    const moved = { ...bill, status: "pendente", monthKey: nextKey };
     setData((d) => ({
       ...d,
       [activeTab]: {
@@ -121,6 +145,7 @@ function AppShell() {
         },
       },
     }));
+    cloud.markMonthStarted(activeTab, nextKey).then(() => cloud.updateBillNow(billId, { monthKey: nextKey, status: "pendente" }));
     showToast(`"${bill.description || "Conta sem nome"}" foi movida para ${monthKeyLabel(nextKey)}.`);
   };
 
@@ -132,20 +157,21 @@ function AppShell() {
       delete stripEmpresa[key];
       return { ...d, pessoal: { ...d.pessoal, months: stripPessoal }, empresa: { ...d.empresa, months: stripEmpresa } };
     });
+    ["pessoal", "empresa"].forEach((t) => {
+      cloud.deleteBillsForMonth(t, key);
+      cloud.deleteMonthMarker(t, key);
+    });
     if (selectedMonth === key) {
       const remaining = allMonthKeys.filter((k) => k !== key);
       setSelectedMonth(remaining[remaining.length - 1] || currentMonthKey());
     }
   };
 
-  const tabs = useMemo(
-    () => [
-      { key: "pessoal", label: "Pessoal" },
-      { key: "empresa", label: "Empresa" },
-      { key: "analises", label: "Análises" },
-    ],
-    []
-  );
+    const tabs = [
+    { key: "pessoal", label: "Pessoal" },
+    { key: "empresa", label: "Empresa" },
+    { key: "analises", label: "Análises" },
+  ];
 
   const sections = [
     { label: "Pessoal", bills: data.pessoal.months[selectedMonth] || [], tags: data.pessoal.tags },
@@ -184,7 +210,7 @@ function AppShell() {
               </button>
             )}
             <button
-              onClick={logout}
+              onClick={signOut}
               className="rounded-lg border border-ink-500 px-3 py-1.5 text-xs text-mist-100 hover:border-mist-300 hover:bg-ink-700/50 transition-colors"
             >
               Sair
@@ -242,7 +268,9 @@ function AppShell() {
                     {showTagManager ? "Ocultar categorias" : "Categorias (quem paga)"}
                   </button>
                 </div>
-                {showTagManager && <TagManager tags={currentTags} onChange={updateTags} onClose={() => setShowTagManager(false)} />}
+                {showTagManager && (
+                  <TagManager tab={activeTab} tags={currentTags} onChange={updateTags} onClose={() => setShowTagManager(false)} />
+                )}
 
                 <BillsTable
                   bills={currentBills}
@@ -281,7 +309,7 @@ function AppShell() {
         )}
 
         <footer className="text-xs text-mist-300/60 pt-4">
-          Os dados ficam salvos apenas neste navegador (localStorage), neste dispositivo.
+          Dados sincronizados na nuvem (Supabase). Acessíveis de qualquer aparelho com o mesmo login.
         </footer>
       </div>
 
@@ -295,6 +323,13 @@ function AppShell() {
 }
 
 export default function App() {
-  const { currentUser } = useAuth();
+  const { currentUser, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <OwlMark size={64} />
+      </div>
+    );
+  }
   return currentUser ? <AppShell /> : <LoginScreen />;
 }
