@@ -1,72 +1,85 @@
 import { createContext, useContext, useEffect, useState } from "react";
-
-const USERS_KEY = "contas-auth-users-v1";
-const SESSION_KEY = "contas-auth-session-v1";
+import { supabase } from "../supabaseClient";
 
 const AuthContext = createContext(null);
 
-function loadUsers() {
-  try {
-    const raw = localStorage.getItem(USERS_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) {
-    console.warn("Não foi possível ler usuários salvos:", e);
-  }
-  return [];
-}
-
-function loadSession() {
-  try {
-    return localStorage.getItem(SESSION_KEY) || null;
-  } catch {
+async function fetchProfile(userId) {
+  const { data, error } = await supabase.from("profiles").select("*").eq("id", userId).single();
+  if (error) {
+    console.error("Erro ao buscar perfil:", error);
     return null;
   }
+  return data;
 }
 
 export function AuthProvider({ children }) {
-  const [users, setUsers] = useState(loadUsers);
-  const [sessionUserId, setSessionUserId] = useState(loadSession);
+  const [session, setSession] = useState(undefined); // undefined = ainda carregando
+  const [profile, setProfile] = useState(null);
+  const [members, setMembers] = useState([]);
 
   useEffect(() => {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
-  }, [users]);
+    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
-    if (sessionUserId) localStorage.setItem(SESSION_KEY, sessionUserId);
-    else localStorage.removeItem(SESSION_KEY);
-  }, [sessionUserId]);
-
-  const currentUser = users.find((u) => u.id === sessionUserId) || null;
-
-  const createAdmin = (name, password) => {
-    const admin = { id: `user-${Date.now().toString(36)}`, name, password, role: "admin" };
-    setUsers([admin]);
-    setSessionUserId(admin.id);
-  };
-
-  const login = (name, password) => {
-    const match = users.find((u) => u.name.toLowerCase() === name.trim().toLowerCase() && u.password === password);
-    if (match) {
-      setSessionUserId(match.id);
-      return true;
+    if (session === undefined) return;
+    if (!session) {
+      setProfile(null);
+      return;
     }
-    return false;
+    // pequeno atraso: o trigger que cria o perfil roda logo após o cadastro
+    let cancelled = false;
+    (async () => {
+      let p = await fetchProfile(session.user.id);
+      if (!p) {
+        await new Promise((r) => setTimeout(r, 800));
+        p = await fetchProfile(session.user.id);
+      }
+      if (!cancelled) setProfile(p);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  const refreshMembers = async () => {
+    const { data, error } = await supabase.from("profiles").select("*").order("created_at");
+    if (!error) setMembers(data || []);
   };
 
-  const logout = () => setSessionUserId(null);
-
-  const addUser = (name, password, role = "membro") => {
-    const user = { id: `user-${Date.now().toString(36)}-${Math.floor(Math.random() * 1000)}`, name, password, role };
-    setUsers((u) => [...u, user]);
+  const signUp = async (name, email, password) => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { name } },
+    });
+    if (error) return { error: error.message };
+    if (!data.session) return { needsConfirmation: true };
+    return {};
   };
 
-  const removeUser = (id) => setUsers((u) => u.filter((usr) => usr.id !== id));
+  const signIn = async (email, password) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { error: error.message };
+    return {};
+  };
 
-  const updateUserPassword = (id, password) => setUsers((u) => u.map((usr) => (usr.id === id ? { ...usr, password } : usr)));
+  const signOut = () => supabase.auth.signOut();
+
+  const setMemberRole = async (id, role) => {
+    const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
+    if (!error) refreshMembers();
+    return !error;
+  };
+
+  const loading = session === undefined || (session && profile === null);
+  const currentUser = session && profile ? { id: profile.id, name: profile.name, role: profile.role, email: session.user.email } : null;
 
   return (
     <AuthContext.Provider
-      value={{ users, currentUser, hasAdmin: users.length > 0, createAdmin, login, logout, addUser, removeUser, updateUserPassword }}
+      value={{ loading, currentUser, members, refreshMembers, signUp, signIn, signOut, setMemberRole }}
     >
       {children}
     </AuthContext.Provider>

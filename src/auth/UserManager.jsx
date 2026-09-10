@@ -1,22 +1,13 @@
-import { useState } from "react";
+import { useEffect } from "react";
 import { useAuth } from "./AuthContext";
 
 export default function UserManager({ onClose }) {
-  const { users, addUser, removeUser, currentUser } = useAuth();
-  const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
-  const [role, setRole] = useState("membro");
-  const [error, setError] = useState("");
+  const { members, refreshMembers, currentUser, setMemberRole } = useAuth();
 
-  const handleAdd = (e) => {
-    e.preventDefault();
-    setError("");
-    if (!name.trim() || password.length < 4) return setError("Nome obrigatório e senha com pelo menos 4 caracteres.");
-    if (users.some((u) => u.name.toLowerCase() === name.trim().toLowerCase())) return setError("Já existe um usuário com esse nome.");
-    addUser(name.trim(), password, role);
-    setName("");
-    setPassword("");
-  };
+  useEffect(() => {
+    refreshMembers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="rounded-xl border border-ink-600 bg-ink-800/80 p-4 flex flex-col gap-3">
@@ -27,62 +18,33 @@ export default function UserManager({ onClose }) {
         </button>
       </div>
 
+      <p className="text-xs text-mist-300">
+        Qualquer pessoa com o link do app pode criar a própria conta pela tela de login. Aqui você só ajusta o papel
+        de cada uma.
+      </p>
+
       <div className="flex flex-col gap-2">
-        {users.map((u) => (
-          <div key={u.id} className="flex items-center justify-between rounded-md border border-ink-600 px-3 py-2">
+        {members.map((m) => (
+          <div key={m.id} className="flex items-center justify-between rounded-md border border-ink-600 px-3 py-2">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-mist-100">{u.name}</span>
+              <span className="text-sm text-mist-100">{m.name}</span>
               <span className="text-[10px] uppercase tracking-wide text-mist-300 border border-ink-500 rounded px-1.5 py-0.5">
-                {u.role === "admin" ? "admin" : "membro"}
+                {m.role === "admin" ? "admin" : "membro"}
               </span>
             </div>
-            {u.id !== currentUser?.id && u.role !== "admin" && (
+            {m.id !== currentUser?.id && (
               <button
                 type="button"
-                onClick={() => removeUser(u.id)}
-                className="text-xs text-signal-rose hover:underline"
+                onClick={() => setMemberRole(m.id, m.role === "admin" ? "membro" : "admin")}
+                className="text-xs text-signal-blue hover:underline"
               >
-                Remover
+                {m.role === "admin" ? "Rebaixar para membro" : "Tornar admin"}
               </button>
             )}
           </div>
         ))}
+        {members.length === 0 && <p className="text-xs text-mist-300/60 italic">Carregando...</p>}
       </div>
-
-      <form onSubmit={handleAdd} className="flex flex-col gap-2 pt-2 border-t border-ink-700">
-        <p className="text-xs text-mist-300">Adicionar novo acesso</p>
-        <div className="flex flex-wrap gap-2">
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Nome"
-            className="flex-1 min-w-[120px] rounded-md bg-ink-800 border border-ink-600 px-2 py-1.5 text-sm text-mist-100 placeholder-mist-300/40 focus:outline-none focus:ring-1 focus:ring-signal-blue focus:border-signal-blue"
-          />
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Senha"
-            className="flex-1 min-w-[120px] rounded-md bg-ink-800 border border-ink-600 px-2 py-1.5 text-sm text-mist-100 placeholder-mist-300/40 focus:outline-none focus:ring-1 focus:ring-signal-blue focus:border-signal-blue"
-          />
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            className="rounded-md bg-ink-800 border border-ink-600 px-2 py-1.5 text-sm text-mist-100 focus:outline-none focus:ring-1 focus:ring-signal-blue"
-          >
-            <option value="membro">Membro</option>
-            <option value="admin">Admin</option>
-          </select>
-        </div>
-        {error && <p className="text-xs text-signal-rose">{error}</p>}
-        <button
-          type="submit"
-          className="self-start rounded-md bg-signal-blue px-3 py-1.5 text-sm font-medium text-ink-950 hover:bg-signal-blue/90 transition-colors"
-        >
-          Adicionar
-        </button>
-      </form>
     </div>
   );
 }

@@ -2,16 +2,17 @@ import { useState } from "react";
 import { TAG_PALETTE, tagDot } from "../tagColors";
 import { makeTag } from "../data/initialData";
 
-export default function TagManager({ tags, onChange, onClose }) {
+export default function TagManager({ tab, tags, onChange, onClose }) {
   const [newName, setNewName] = useState("");
 
-  const updateTag = (id, fields) => onChange(tags.map((t) => (t.id === id ? { ...t, ...fields } : t)));
-  const removeTag = (id) => onChange(tags.filter((t) => t.id !== id));
+  const updateTag = (id, fields) => onChange(tags.map((t) => (t.id === id ? { ...t, ...fields } : t)), { id, fields });
+  const removeTag = (id) => onChange(tags.filter((t) => t.id !== id), { removedId: id });
   const addTag = () => {
     if (!newName.trim()) return;
     const usedColors = tags.map((t) => t.color);
     const freeColor = TAG_PALETTE.find((c) => !usedColors.includes(c.key))?.key ?? TAG_PALETTE[0].key;
-    onChange([...tags, makeTag(newName.trim(), freeColor)]);
+    const tag = makeTag(tab, newName.trim(), freeColor);
+    onChange([...tags, tag], { created: tag });
     setNewName("");
   };
 
