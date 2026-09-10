@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-ink-900 text-mist-100 font-sans antialiased;
+    background-image:
+      radial-gradient(circle at 15% 0%, rgba(62,123,250,0.10), transparent 45%),
+      radial-gradient(circle at 100% 30%, rgba(140,124,240,0.08), transparent 40%);
+    background-attachment: fixed;
+  }
+  ::selection {
+    background: rgba(62,123,250,0.35);
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #2A3655;
+    border-radius: 999px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+}
+
+/* Editable cell caret color etc */
+input, select {
+  color-scheme: dark;
+}
+
+@media print {
+  body { background: white !important; }
+}
+
+@keyframes owl-eye-pulse {
+  0%, 100% { opacity: 0.75; filter: drop-shadow(0 0 2px rgba(34,199,238,0.6)); }
+  50% { opacity: 1; filter: drop-shadow(0 0 6px rgba(34,199,238,0.95)); }
+}
+.owl-eye-pulse {
+  animation: owl-eye-pulse 2.4s ease-in-out infinite;
+}
