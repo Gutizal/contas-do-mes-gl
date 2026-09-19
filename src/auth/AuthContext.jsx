@@ -74,12 +74,37 @@ export function AuthProvider({ children }) {
     return !error;
   };
 
+  const updatePassword = async (newPassword) => {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) return { error: error.message };
+    return {};
+  };
+
+  const requestPasswordReset = async (email) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/`,
+    });
+    if (error) return { error: error.message };
+    return {};
+  };
+
   const loading = session === undefined || (session && profile === null);
   const currentUser = session && profile ? { id: profile.id, name: profile.name, role: profile.role, email: session.user.email } : null;
 
   return (
     <AuthContext.Provider
-      value={{ loading, currentUser, members, refreshMembers, signUp, signIn, signOut, setMemberRole }}
+      value={{
+        loading,
+        currentUser,
+        members,
+        refreshMembers,
+        signUp,
+        signIn,
+        signOut,
+        setMemberRole,
+        updatePassword,
+        requestPasswordReset,
+      }}
     >
       {children}
     </AuthContext.Provider>

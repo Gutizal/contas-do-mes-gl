@@ -11,6 +11,7 @@ import { exportCSV, exportPDF } from "./export";
 import { useAuth } from "./auth/AuthContext";
 import LoginScreen from "./auth/LoginScreen";
 import UserManager from "./auth/UserManager";
+import ChangePasswordForm from "./auth/ChangePasswordForm";
 import { currentMonthKey, monthKeyLabel, sortMonthKeys, monthKeyShort, shiftMonthKey, findPreviousExistingMonth } from "./monthUtils";
 import { effectiveValue } from "./utils";
 import * as cloud from "./data/cloudStore";
@@ -24,6 +25,7 @@ function AppShell() {
   const [monthInitialized, setMonthInitialized] = useState(false);
   const [showTagManager, setShowTagManager] = useState(false);
   const [showUserManager, setShowUserManager] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
 
@@ -167,7 +169,26 @@ function AppShell() {
     }
   };
 
-    const tabs = [
+  // Desfaz a escolha feita (copiar de um mês / começar em branco) só nesta
+  // aba, sem mexer na outra aba nem apagar o mês da outra. Volta pra tela
+  // de "copiar ou começar em branco".
+  const handleResetMonthTab = () => {
+    if (
+      !window.confirm(
+        `Isso vai apagar todas as contas de ${monthKeyLabel(selectedMonth)} na aba ${activeTab === "pessoal" ? "Pessoal" : "Empresa"} e voltar para o início. Continuar?`
+      )
+    )
+      return;
+    setData((d) => {
+      const months = { ...d[activeTab].months };
+      delete months[selectedMonth];
+      return { ...d, [activeTab]: { ...d[activeTab], months } };
+    });
+    cloud.deleteBillsForMonth(activeTab, selectedMonth);
+    cloud.deleteMonthMarker(activeTab, selectedMonth);
+  };
+
+  const tabs = [
     { key: "pessoal", label: "Pessoal" },
     { key: "empresa", label: "Empresa" },
     { key: "analises", label: "Análises" },
@@ -185,8 +206,8 @@ function AppShell() {
   }));
 
   return (
-    <div className="min-h-screen px-4 py-6 sm:px-8 sm:py-10">
-      <div className="mx-auto max-w-5xl flex flex-col gap-6">
+    <div className="min-h-screen px-4 py-6 sm:px-8 sm:py-10 overflow-x-hidden">
+      <div className="mx-auto max-w-5xl min-w-0 flex flex-col gap-6">
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <OwlMark size={80} />
@@ -197,7 +218,7 @@ function AppShell() {
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
             <span className="text-xs text-mist-300 hidden sm:inline">
               {currentUser?.name} ({currentUser?.role === "admin" ? "admin" : "membro"})
             </span>
@@ -210,6 +231,12 @@ function AppShell() {
               </button>
             )}
             <button
+              onClick={() => setShowChangePassword((v) => !v)}
+              className="rounded-lg border border-ink-500 px-3 py-1.5 text-xs text-mist-100 hover:border-mist-300 hover:bg-ink-700/50 transition-colors"
+            >
+              Trocar senha
+            </button>
+            <button
               onClick={signOut}
               className="rounded-lg border border-ink-500 px-3 py-1.5 text-xs text-mist-100 hover:border-mist-300 hover:bg-ink-700/50 transition-colors"
             >
@@ -219,6 +246,7 @@ function AppShell() {
         </header>
 
         {showUserManager && <UserManager onClose={() => setShowUserManager(false)} />}
+        {showChangePassword && <ChangePasswordForm onClose={() => setShowChangePassword(false)} />}
 
         <nav className="flex items-center gap-2 border-b border-ink-600">
           {tabs.map((t) => (
@@ -260,7 +288,13 @@ function AppShell() {
               <>
                 <SummaryCards bills={currentBills} tags={currentTags} />
 
-                <div className="flex justify-end">
+                <div className="flex justify-between items-center flex-wrap gap-2">
+                  <button
+                    onClick={handleResetMonthTab}
+                    className="text-xs text-mist-300/70 hover:text-signal-rose transition-colors"
+                  >
+                    Reiniciar este mês (voltar para copiar/começar em branco)
+                  </button>
                   <button
                     onClick={() => setShowTagManager((v) => !v)}
                     className="text-xs text-signal-blue hover:underline"

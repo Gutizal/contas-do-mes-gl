@@ -30,7 +30,7 @@ export default function BillsTable({ bills, tags, onUpdate, onRemove, onPostpone
   };
 
   return (
-    <div className="rounded-xl border border-ink-600 bg-ink-800/60 overflow-hidden">
+    <div className="rounded-xl border border-ink-600 bg-ink-800/60 overflow-hidden min-w-0">
       <div className="overflow-x-auto scrollbar-thin">
         <table className="w-full min-w-[1040px] border-collapse text-sm">
           <thead>

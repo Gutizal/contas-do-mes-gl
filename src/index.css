@@ -6,6 +6,12 @@
   html, body, #root {
     height: 100%;
   }
+  html, body {
+    /* Trava qualquer rolagem horizontal da página inteira: só a tabela
+       de contas (dentro do seu próprio contêiner) pode rolar de lado. */
+    overflow-x: hidden;
+    max-width: 100vw;
+  }
   body {
     @apply bg-ink-900 text-mist-100 font-sans antialiased;
     background-image:
@@ -35,6 +41,17 @@
 /* Editable cell caret color etc */
 input, select {
   color-scheme: dark;
+}
+
+/* Esconde as setinhas nativas de input number: em telas pequenas elas
+   ficam desproporcionais e atrapalham o toque. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
 }
 
 @media print {

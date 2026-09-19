@@ -21,10 +21,10 @@ const HEX = { blue: "#3E7BFA", rose: "#E85D75", violet: "#8C7CF0", teal: "#22B8A
 
 function StatCard({ label, value, sub }) {
   return (
-    <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4 flex flex-col gap-1 min-w-[150px] flex-1">
-      <span className="text-xs text-mist-300">{label}</span>
-      <span className="text-xl font-mono font-semibold text-mist-50">{value}</span>
-      {sub && <span className="text-xs text-mist-300/80">{sub}</span>}
+    <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-3 sm:p-4 flex flex-col gap-1 min-w-0">
+      <span className="text-xs text-mist-300 truncate">{label}</span>
+      <span className="text-lg sm:text-xl font-mono font-semibold text-mist-50 break-words">{value}</span>
+      {sub && <span className="text-xs text-mist-300/80 truncate">{sub}</span>}
     </div>
   );
 }
@@ -99,15 +99,15 @@ export default function AnalyticsTab({ datasets, selectedMonth }) {
         <span className="text-xs text-mist-300">Mostrando o mês selecionado nas abas Pessoal e Empresa</span>
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
         <StatCard label="Total considerado" value={fmtBRL(total)} sub={`${bills.length} conta${bills.length === 1 ? "" : "s"}`} />
         <StatCard label="Média por conta" value={fmtBRL(media)} />
         <StatCard label="Maior conta" value={maior ? fmtBRL(effectiveValue(maior)) : "não definido"} sub={maior?.description || ""} />
         <StatCard label="Contas com valor variável" value={String(variaveis)} sub={`de ${bills.length} no total`} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4">
+      <div className="grid gap-4 md:grid-cols-2 min-w-0">
+        <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4 min-w-0">
           <h3 className="text-sm font-medium text-mist-100 mb-3">Por responsável</h3>
           {byTag.length ? (
             <ResponsiveContainer width="100%" height={230}>
@@ -126,7 +126,7 @@ export default function AnalyticsTab({ datasets, selectedMonth }) {
           )}
         </div>
 
-        <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4">
+        <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4 min-w-0">
           <h3 className="text-sm font-medium text-mist-100 mb-3">Maiores contas</h3>
           {byBill.length ? (
             <ResponsiveContainer width="100%" height={230}>
@@ -144,7 +144,7 @@ export default function AnalyticsTab({ datasets, selectedMonth }) {
         </div>
       </div>
 
-      <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4">
+      <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4 min-w-0">
         <h3 className="text-sm font-medium text-mist-100 mb-3">Comparação entre os meses criados</h3>
         {historyChart.length > 1 ? (
           <ResponsiveContainer width="100%" height={240}>

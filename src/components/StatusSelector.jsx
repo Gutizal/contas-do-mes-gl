@@ -1,22 +1,35 @@
-import { Check, Clock3, CornerDownRight } from "lucide-react";
+import { Check, Clock3, CornerDownRight, Lock } from "lucide-react";
 
 export default function StatusSelector({ status, onChangeStatus, onPostpone }) {
   const isPago = status === "pago";
+
+  if (isPago) {
+    // Uma vez pago, fica travado: não existe botão pra voltar a pendente,
+    // nem faz sentido postergar uma conta que já foi quitada.
+    return (
+      <div
+        title="Pago — não pode ser revertido"
+        className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium bg-signal-teal/90 border-signal-teal text-ink-950 cursor-default"
+      >
+        <Check size={12} />
+        Pago
+        <Lock size={10} className="opacity-70" />
+      </div>
+    );
+  }
+
   return (
     <div className="inline-flex items-center gap-1">
       <button
         type="button"
-        onClick={() => onChangeStatus(isPago ? "pendente" : "pago")}
-        title={isPago ? "Pago (clique para marcar como pendente)" : "Pendente (clique para marcar como pago)"}
-        className={[
-          "flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium transition-colors",
-          isPago
-            ? "bg-signal-teal/90 border-signal-teal text-ink-950"
-            : "bg-ink-700 border-ink-500 text-signal-amber hover:border-mist-300",
-        ].join(" ")}
+        onClick={() => {
+          if (window.confirm("Marcar como pago? Essa ação não pode ser desfeita depois.")) onChangeStatus("pago");
+        }}
+        title="Marcar como pago (não dá pra desfazer depois)"
+        className="flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium transition-colors bg-ink-700 border-ink-500 text-signal-amber hover:border-mist-300"
       >
-        {isPago ? <Check size={12} /> : <Clock3 size={12} />}
-        {isPago ? "Pago" : "Pendente"}
+        <Clock3 size={12} />
+        Pendente
       </button>
       <button
         type="button"

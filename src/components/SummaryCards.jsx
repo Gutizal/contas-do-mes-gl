@@ -2,10 +2,10 @@ import { effectiveValue, fmtBRL } from "../utils";
 
 function Card({ label, value, accent, sub }) {
   return (
-    <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4 flex flex-col gap-1 min-w-[150px] flex-1">
-      <span className="text-xs text-mist-300">{label}</span>
-      <span className={`text-2xl font-mono font-semibold ${accent ?? "text-mist-50"}`}>{value}</span>
-      {sub && <span className="text-xs text-mist-300/80">{sub}</span>}
+    <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-3 sm:p-4 flex flex-col gap-1 min-w-0">
+      <span className="text-xs text-mist-300 truncate">{label}</span>
+      <span className={`text-lg sm:text-2xl font-mono font-semibold break-words ${accent ?? "text-mist-50"}`}>{value}</span>
+      {sub && <span className="text-xs text-mist-300/80 truncate">{sub}</span>}
     </div>
   );
 }
@@ -18,7 +18,7 @@ export default function SummaryCards({ bills, tags }) {
   const totalPendente = total - totalPago;
 
   return (
-    <div className="flex flex-wrap gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3">
       <Card label="Total considerado no mês" value={fmtBRL(total)} accent="text-signal-blue" sub={`${bills.length} conta${bills.length === 1 ? "" : "s"}`} />
       <Card label="Já pago" value={fmtBRL(totalPago)} accent="text-signal-teal" />
       <Card label="Ainda pendente" value={fmtBRL(totalPendente)} accent="text-signal-amber" />
