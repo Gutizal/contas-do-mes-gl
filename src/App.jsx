@@ -1,369 +1,311 @@
-import { useEffect, useRef, useState } from "react";
-import BillsTable from "./components/BillsTable";
-import SummaryCards from "./components/SummaryCards";
-import TagManager from "./components/TagManager";
-import AnalyticsTab from "./components/AnalyticsTab";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { Download, FileText, Tags } from "lucide-react";
+import Header from "./components/Header";
+import SpaceBar from "./components/SpaceBar";
+import OwlMark from "./components/OwlMark";
 import MonthSwitcher from "./components/MonthSwitcher";
 import MonthSetupPrompt from "./components/MonthSetupPrompt";
-import OwlMark from "./components/OwlMark";
-import { makeEmptyBill } from "./data/initialData";
-import { exportCSV, exportPDF } from "./export";
+import SummaryCards from "./components/SummaryCards";
+import BillsList from "./components/BillsList";
+import TagManager from "./components/TagManager";
+import { Toast, useToast } from "./components/Toast";
+import { Button, Modal, Spinner } from "./components/ui";
+import { useConfirm } from "./components/Confirm";
 import { useAuth } from "./auth/AuthContext";
 import LoginScreen from "./auth/LoginScreen";
 import UserManager from "./auth/UserManager";
 import ChangePasswordForm from "./auth/ChangePasswordForm";
-import { currentMonthKey, monthKeyLabel, sortMonthKeys, monthKeyShort, shiftMonthKey, findPreviousExistingMonth } from "./monthUtils";
-import { effectiveValue } from "./utils";
-import * as cloud from "./data/cloudStore";
+import { MissingConfigScreen, PendingApprovalScreen, ProfileMissingScreen, ResetPasswordScreen } from "./auth/StatusScreens";
+import { useLedger } from "./hooks/useLedger";
+import { flushPending } from "./data/cloudStore";
+import { monthlyTotals, summarize } from "./lib/calc";
+import { exportCSV, exportPDF } from "./lib/export";
+import { currentMonthKey, findPreviousExistingMonth, monthKeyLabel, shiftMonthKey } from "./lib/months";
+import { supabaseConfigured } from "./lib/supabaseClient";
+import { safeGet, safeSet } from "./lib/storage";
+import { plural } from "./lib/format";
 
-function AppShell() {
-  const { currentUser, signOut } = useAuth();
-  const [data, setData] = useState(null);
-  const [loadError, setLoadError] = useState(null);
+// Recharts é grande: só carrega quando a aba Análises é aberta.
+const AnalyticsTab = lazy(() => import("./components/AnalyticsTab"));
+
+const TAB_LABEL = { pessoal: "Pessoal", empresa: "Empresa" };
+const TABS = [
+  ["pessoal", "Pessoal"],
+  ["empresa", "Empresa"],
+  ["analises", "Análises"],
+];
+
+const Splash = () => (
+  <div className="flex min-h-dvh items-center justify-center">
+    <OwlMark size={72} />
+  </div>
+);
+
+function Workspace({ ownerId }) {
+  const { signOut } = useAuth();
+  const { data, error, reload, monthKeys, actions } = useLedger(ownerId);
   const [tab, setTab] = useState("pessoal");
-  const [selectedMonth, setSelectedMonth] = useState(currentMonthKey());
-  const [monthInitialized, setMonthInitialized] = useState(false);
-  const [showTagManager, setShowTagManager] = useState(false);
-  const [showUserManager, setShowUserManager] = useState(false);
-  const [showChangePassword, setShowChangePassword] = useState(false);
-  const [toast, setToast] = useState(null);
-  const toastTimer = useRef(null);
+  // Sempre abre no mês atual (o mês escolhido não é "lembrado" entre acessos).
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthKey);
+  const [dialog, setDialog] = useState(null); // "tags"
+  const [focusId, setFocusId] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const { toast, showToast } = useToast();
+  const confirm = useConfirm();
 
-  useEffect(() => {
-    let cancelled = false;
-    cloud
-      .loadAll()
-      .then((loaded) => {
-        if (cancelled) return;
-        setData(loaded);
-        const keys = sortMonthKeys([...new Set([...Object.keys(loaded.pessoal.months), ...Object.keys(loaded.empresa.months)])]);
-        setSelectedMonth(keys.length ? keys[keys.length - 1] : currentMonthKey());
-        setMonthInitialized(true);
-      })
-      .catch((err) => {
-        console.error(err);
-        if (!cancelled) setLoadError("Não foi possível carregar seus dados do Supabase. Confira a conexão e recarregue a página.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const showToast = (msg) => {
-    setToast(msg);
-    clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 3500);
-  };
-  useEffect(() => () => clearTimeout(toastTimer.current), []);
-
-  const isAnalytics = tab === "analises";
   const activeTab = tab === "empresa" ? "empresa" : "pessoal";
+  const tabData = data?.[activeTab];
 
-  if (loadError) {
+  const derived = useMemo(() => {
+    if (!data) return null;
+    const bills = data[activeTab].months[selectedMonth] || [];
+    const prevKey = shiftMonthKey(selectedMonth, -1);
+    const prevBills = data[activeTab].months[prevKey];
+    const parts = ["pessoal", "empresa"].map((t) => ({ label: TAB_LABEL[t], total: summarize(data[t].months[selectedMonth] || []).total }));
+    const usage = {};
+    Object.values(data[activeTab].months).forEach((list) => list.forEach((b) => b.tagId && (usage[b.tagId] = (usage[b.tagId] || 0) + 1)));
+    return {
+      bills,
+      exists: Boolean(data[activeTab].months[selectedMonth]),
+      previous: { key: prevKey, total: prevBills ? summarize(prevBills).total : null },
+      combined: { total: Math.round(parts.reduce((s, p) => s + p.total, 0) * 100) / 100, parts },
+      usage,
+    };
+  }, [data, activeTab, selectedMonth]);
+
+  if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4 text-center">
-        <p className="text-sm text-signal-rose max-w-sm">{loadError}</p>
+      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 px-6 text-center">
+        <p className="max-w-sm text-sm text-signal-rose">{error}</p>
+        <div className="flex gap-2">
+          <Button variant="primary" onClick={() => reload()}>
+            Tentar de novo
+          </Button>
+          <Button variant="ghost" onClick={signOut}>
+            Sair
+          </Button>
+        </div>
       </div>
     );
   }
+  if (!data) return <Splash />;
 
-  if (!data || !monthInitialized) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <OwlMark size={64} />
-      </div>
-    );
-  }
+  const { bills, exists, previous, combined, usage } = derived;
+  const a = actions;
+  const isAnalytics = tab === "analises";
+  const monthsWithData = new Set(monthKeys);
 
-  const allMonthKeys = sortMonthKeys([...new Set([...Object.keys(data.pessoal.months), ...Object.keys(data.empresa.months)])]);
-  const monthExists = Boolean(data[activeTab].months[selectedMonth]);
-  const currentBills = data[activeTab].months[selectedMonth] || [];
-  const currentTags = data[activeTab].tags;
-
-  const setMonthBills = (tabKey, key, bills) =>
-    setData((d) => ({ ...d, [tabKey]: { ...d[tabKey], months: { ...d[tabKey].months, [key]: bills } } }));
-
-  const updateBills = (nextBills) => setMonthBills(activeTab, selectedMonth, nextBills);
-
-  const updateTags = (nextTags, meta) => {
-    setData((d) => ({ ...d, [activeTab]: { ...d[activeTab], tags: nextTags } }));
-    if (meta?.created) cloud.insertTag(meta.created);
-    else if (meta?.removedId) cloud.deleteTagRemote(meta.removedId);
-    else if (meta?.id) cloud.updateTagRemote(meta.id, meta.fields);
+  const handlePostpone = (id) => {
+    const bill = bills.find((b) => b.id === id);
+    const next = a.postponeBill(activeTab, selectedMonth, id);
+    showToast(`“${bill?.description || "Conta sem nome"}” foi movida para ${monthKeyLabel(next)}.`);
   };
 
-  const handleUpdate = (id, fields) => {
-    updateBills(currentBills.map((b) => (b.id === id ? { ...b, ...fields } : b)));
-    cloud.scheduleBillUpdate(id, fields);
+  const handleCopy = (fromKey) => {
+    const { copied, finished } = a.copyMonth(activeTab, selectedMonth, fromKey);
+    const parts = [`${plural(copied, "conta copiada", "contas copiadas")} de ${monthKeyLabel(fromKey)}.`];
+    if (finished) parts.push(`${plural(finished, "parcelada já quitada ficou", "parceladas já quitadas ficaram")} de fora.`);
+    showToast(parts.join(" "));
   };
 
-  const handleRemove = (id) => {
-    updateBills(currentBills.filter((b) => b.id !== id));
-    cloud.deleteBill(id);
-  };
+  const handleAdd = () => setFocusId(a.addBill(activeTab, selectedMonth));
 
-  const handleAdd = () => {
-    const bill = makeEmptyBill(activeTab, selectedMonth);
-    updateBills([...currentBills, bill]);
-    cloud.insertBill(bill);
-  };
-
-  const handleStartBlank = () => {
-    setMonthBills(activeTab, selectedMonth, []);
-    cloud.markMonthStarted(activeTab, selectedMonth);
-  };
-
-  const handleCopyFrom = (fromKey) => {
-    const source = data[activeTab].months[fromKey] || [];
-    const clone = source.map((b) => makeEmptyBill(activeTab, selectedMonth)).map((fresh, i) => ({
-      ...fresh,
-      description: source[i].description,
-      value: source[i].value,
-      valueMin: source[i].valueMin,
-      valueMax: source[i].valueMax,
-      installmentsLeft: source[i].installmentsLeft,
-      tagId: source[i].tagId,
-      notes: source[i].notes,
-      status: "pendente",
-    }));
-    setMonthBills(activeTab, selectedMonth, clone);
-    cloud.markMonthStarted(activeTab, selectedMonth).then(() => cloud.insertBills(clone));
-  };
-
-  const handlePostpone = (billId) => {
-    const bill = currentBills.find((b) => b.id === billId);
-    if (!bill) return;
-    const nextKey = shiftMonthKey(selectedMonth, 1);
-    const nextBills = data[activeTab].months[nextKey] || [];
-    const moved = { ...bill, status: "pendente", monthKey: nextKey };
-    setData((d) => ({
-      ...d,
-      [activeTab]: {
-        ...d[activeTab],
-        months: {
-          ...d[activeTab].months,
-          [selectedMonth]: currentBills.filter((b) => b.id !== billId),
-          [nextKey]: [...nextBills, moved],
-        },
-      },
-    }));
-    cloud.markMonthStarted(activeTab, nextKey).then(() => cloud.updateBillNow(billId, { monthKey: nextKey, status: "pendente" }));
-    showToast(`"${bill.description || "Conta sem nome"}" foi movida para ${monthKeyLabel(nextKey)}.`);
-  };
-
-  const handleDeleteMonth = (key) => {
-    setData((d) => {
-      const stripPessoal = { ...d.pessoal.months };
-      const stripEmpresa = { ...d.empresa.months };
-      delete stripPessoal[key];
-      delete stripEmpresa[key];
-      return { ...d, pessoal: { ...d.pessoal, months: stripPessoal }, empresa: { ...d.empresa, months: stripEmpresa } };
+  const handleDeleteMonth = async () => {
+    const n = ["pessoal", "empresa"].reduce((s, t) => s + (data[t].months[selectedMonth]?.length || 0), 0);
+    const ok = await confirm({
+      title: `Excluir ${monthKeyLabel(selectedMonth)}?`,
+      message: `Isso apaga ${plural(n, "conta", "contas")} (Pessoal e Empresa) e não dá para desfazer.`,
+      confirmLabel: "Excluir mês",
+      danger: true,
     });
-    ["pessoal", "empresa"].forEach((t) => {
-      cloud.deleteBillsForMonth(t, key);
-      cloud.deleteMonthMarker(t, key);
-    });
-    if (selectedMonth === key) {
-      const remaining = allMonthKeys.filter((k) => k !== key);
-      setSelectedMonth(remaining[remaining.length - 1] || currentMonthKey());
-    }
+    if (ok) a.deleteMonth(selectedMonth);
   };
 
-  // Desfaz a escolha feita (copiar de um mês / começar em branco) só nesta
-  // aba, sem mexer na outra aba nem apagar o mês da outra. Volta pra tela
-  // de "copiar ou começar em branco".
-  const handleResetMonthTab = () => {
-    if (
-      !window.confirm(
-        `Isso vai apagar todas as contas de ${monthKeyLabel(selectedMonth)} na aba ${activeTab === "pessoal" ? "Pessoal" : "Empresa"} e voltar para o início. Continuar?`
-      )
-    )
-      return;
-    setData((d) => {
-      const months = { ...d[activeTab].months };
-      delete months[selectedMonth];
-      return { ...d, [activeTab]: { ...d[activeTab], months } };
+  const handleReset = async () => {
+    const ok = await confirm({
+      title: "Reiniciar este mês?",
+      message: `Apaga todas as contas de ${monthKeyLabel(selectedMonth)} na aba ${TAB_LABEL[activeTab]} e volta para “copiar ou começar em branco”. Não dá para desfazer.`,
+      confirmLabel: "Reiniciar",
+      danger: true,
     });
-    cloud.deleteBillsForMonth(activeTab, selectedMonth);
-    cloud.deleteMonthMarker(activeTab, selectedMonth);
+    if (ok) a.resetMonth(activeTab, selectedMonth);
   };
 
-  const tabs = [
-    { key: "pessoal", label: "Pessoal" },
-    { key: "empresa", label: "Empresa" },
-    { key: "analises", label: "Análises" },
-  ];
-
-  const sections = [
+  const sections = () => [
     { label: "Pessoal", bills: data.pessoal.months[selectedMonth] || [], tags: data.pessoal.tags },
     { label: "Empresa", bills: data.empresa.months[selectedMonth] || [], tags: data.empresa.tags },
   ];
+  const history = () => monthlyTotals(data, monthKeys);
+  const fileBase = `contas-${selectedMonth}`;
 
-  const monthlyTotals = allMonthKeys.map((k) => ({
-    label: monthKeyShort(k),
-    pessoal: (data.pessoal.months[k] || []).reduce((s, b) => s + effectiveValue(b), 0),
-    empresa: (data.empresa.months[k] || []).reduce((s, b) => s + effectiveValue(b), 0),
-  }));
+  const handlePDF = async () => {
+    setExporting(true);
+    try {
+      await exportPDF(`${fileBase}.pdf`, selectedMonth, sections(), history());
+    } catch (err) {
+      console.error(err);
+      showToast("Não foi possível gerar o PDF.");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
-    <div className="min-h-screen px-4 py-6 sm:px-8 sm:py-10 overflow-x-hidden">
-      <div className="mx-auto max-w-5xl min-w-0 flex flex-col gap-6">
-        <header className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <OwlMark size={80} />
-            <div>
-              <h1 className="text-2xl sm:text-3xl font-semibold text-mist-50">Contas do mês</h1>
-              <p className="text-sm text-mist-300">
-                Tudo o que precisa ser pago, mês a mês, pessoal e empresa lado a lado.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap min-w-0">
-            <span className="text-xs text-mist-300 hidden sm:inline">
-              {currentUser?.name} ({currentUser?.role === "admin" ? "admin" : "membro"})
-            </span>
-            {currentUser?.role === "admin" && (
-              <button
-                onClick={() => setShowUserManager((v) => !v)}
-                className="rounded-lg border border-ink-500 px-3 py-1.5 text-xs text-mist-100 hover:border-mist-300 hover:bg-ink-700/50 transition-colors"
-              >
-                Usuários
-              </button>
-            )}
+    <>
+      <main className="mx-auto flex max-w-6xl min-w-0 flex-col gap-5 px-4 pb-safe pt-5 sm:px-8 sm:pt-7">
+        <nav className="grid grid-cols-3 gap-1 rounded-xl border border-ink-600 bg-ink-800/70 p-1 sm:inline-flex sm:self-start" role="tablist" aria-label="Seções">
+          {TABS.map(([key, label]) => (
             <button
-              onClick={() => setShowChangePassword((v) => !v)}
-              className="rounded-lg border border-ink-500 px-3 py-1.5 text-xs text-mist-100 hover:border-mist-300 hover:bg-ink-700/50 transition-colors"
+              key={key}
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              className={`h-9 rounded-lg px-5 text-sm font-medium transition-colors ${tab === key ? "bg-ink-500 text-mist-50 shadow" : "text-mist-300 hover:text-mist-100"}`}
             >
-              Trocar senha
-            </button>
-            <button
-              onClick={signOut}
-              className="rounded-lg border border-ink-500 px-3 py-1.5 text-xs text-mist-100 hover:border-mist-300 hover:bg-ink-700/50 transition-colors"
-            >
-              Sair
-            </button>
-          </div>
-        </header>
-
-        {showUserManager && <UserManager onClose={() => setShowUserManager(false)} />}
-        {showChangePassword && <ChangePasswordForm onClose={() => setShowChangePassword(false)} />}
-
-        <nav className="flex items-center gap-2 border-b border-ink-600">
-          {tabs.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={[
-                "px-4 py-2.5 text-sm font-medium rounded-t-lg -mb-px border-b-2 transition-colors",
-                tab === t.key
-                  ? "border-signal-blue text-mist-50"
-                  : "border-transparent text-mist-300 hover:text-mist-100",
-              ].join(" ")}
-            >
-              {t.label}
+              {label}
             </button>
           ))}
         </nav>
 
+        <MonthSwitcher
+          selected={selectedMonth}
+          monthsWithData={monthsWithData}
+          tabLabel={TAB_LABEL[activeTab]}
+          canReset={!isAnalytics && exists}
+          canDelete={monthsWithData.has(selectedMonth)}
+          onSelect={setSelectedMonth}
+          onReset={handleReset}
+          onDelete={handleDeleteMonth}
+        />
+
         {isAnalytics ? (
-          <AnalyticsTab datasets={data} selectedMonth={selectedMonth} />
+          <Suspense
+            fallback={
+              <div className="flex justify-center py-16 text-mist-300">
+                <Spinner className="h-6 w-6" />
+              </div>
+            }
+          >
+            <AnalyticsTab data={data} monthKey={selectedMonth} monthKeys={monthKeys} />
+          </Suspense>
+        ) : !exists ? (
+          <MonthSetupPrompt
+            monthKey={selectedMonth}
+            tabLabel={TAB_LABEL[activeTab]}
+            suggestedFromKey={findPreviousExistingMonth(Object.keys(tabData.months), selectedMonth)}
+            existingMonths={Object.keys(tabData.months)}
+            onStartBlank={() => a.startMonthBlank(activeTab, selectedMonth)}
+            onCopyFrom={handleCopy}
+          />
         ) : (
           <>
-            <MonthSwitcher
-              existingMonths={allMonthKeys}
-              selected={selectedMonth}
-              onSelect={setSelectedMonth}
-              onDelete={handleDeleteMonth}
+            <SummaryCards bills={bills} tags={tabData.tags} monthKey={selectedMonth} previous={previous} combined={combined} />
+
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-display text-base font-bold text-mist-50">
+                Contas · {TAB_LABEL[activeTab]} <span className="font-medium text-mist-400">({bills.length})</span>
+              </h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" onClick={() => setDialog("tags")}>
+                  <Tags size={14} /> Categorias
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => exportCSV(`${fileBase}.csv`, selectedMonth, sections(), history())} title="Exportar o mês em CSV">
+                  <Download size={14} /> CSV
+                </Button>
+                <Button size="sm" variant="ghost" onClick={handlePDF} disabled={exporting} title="Exportar o mês em PDF">
+                  {exporting ? <Spinner /> : <FileText size={14} />} PDF
+                </Button>
+              </div>
+            </div>
+
+            <BillsList
+              bills={bills}
+              tags={tabData.tags}
+              focusId={focusId}
+              onAdd={handleAdd}
+              onUpdate={(id, fields) => a.updateBill(activeTab, selectedMonth, id, fields)}
+              onRemove={(id) => a.removeBill(activeTab, selectedMonth, id)}
+              onPostpone={handlePostpone}
+              onPay={(id) => a.markPaid(activeTab, selectedMonth, id)}
             />
-
-            {!monthExists ? (
-              <MonthSetupPrompt
-                monthKey={selectedMonth}
-                suggestedFromKey={findPreviousExistingMonth(Object.keys(data[activeTab].months), selectedMonth)}
-                existingMonths={Object.keys(data[activeTab].months)}
-                onStartBlank={handleStartBlank}
-                onCopyFrom={handleCopyFrom}
-              />
-            ) : (
-              <>
-                <SummaryCards bills={currentBills} tags={currentTags} />
-
-                <div className="flex justify-between items-center flex-wrap gap-2">
-                  <button
-                    onClick={handleResetMonthTab}
-                    className="text-xs text-mist-300/70 hover:text-signal-rose transition-colors"
-                  >
-                    Reiniciar este mês (voltar para copiar/começar em branco)
-                  </button>
-                  <button
-                    onClick={() => setShowTagManager((v) => !v)}
-                    className="text-xs text-signal-blue hover:underline"
-                  >
-                    {showTagManager ? "Ocultar categorias" : "Categorias (quem paga)"}
-                  </button>
-                </div>
-                {showTagManager && (
-                  <TagManager tab={activeTab} tags={currentTags} onChange={updateTags} onClose={() => setShowTagManager(false)} />
-                )}
-
-                <BillsTable
-                  bills={currentBills}
-                  tags={currentTags}
-                  onUpdate={handleUpdate}
-                  onRemove={handleRemove}
-                  onPostpone={handlePostpone}
-                />
-
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    onClick={handleAdd}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-signal-blue px-4 py-2 text-sm font-medium text-ink-950 hover:bg-signal-blue/90 transition-colors"
-                  >
-                    + Adicionar conta
-                  </button>
-
-                  <div className="ml-auto flex flex-wrap gap-2">
-                    <button
-                      onClick={() => exportCSV("contas-do-mes.csv", sections, monthlyTotals)}
-                      className="rounded-lg border border-ink-500 px-4 py-2 text-sm text-mist-100 hover:border-mist-300 hover:bg-ink-700/50 transition-colors"
-                    >
-                      Exportar CSV
-                    </button>
-                    <button
-                      onClick={() => exportPDF("contas-do-mes.pdf", "Contas do mês", selectedMonth, sections, monthlyTotals)}
-                      className="rounded-lg border border-ink-500 px-4 py-2 text-sm text-mist-100 hover:border-mist-300 hover:bg-ink-700/50 transition-colors"
-                    >
-                      Exportar PDF
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
           </>
         )}
+      </main>
 
-        <footer className="text-xs text-mist-300/60 pt-4">
-          Dados sincronizados na nuvem (Supabase). Acessíveis de qualquer aparelho com o mesmo login.
-        </footer>
-      </div>
+      {dialog === "tags" && (
+        <Modal title={`Categorias · ${TAB_LABEL[activeTab]}`} onClose={() => setDialog(null)}>
+          <TagManager tags={tabData.tags} usage={usage} onAdd={(name, color) => a.addTag(activeTab, name, color)} onUpdate={(id, f) => a.updateTag(activeTab, id, f)} onRemove={(id) => a.removeTag(activeTab, id)} />
+        </Modal>
+      )}
 
-      {toast && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 rounded-lg bg-ink-700 border border-ink-500 px-4 py-2.5 text-sm text-mist-100 shadow-xl z-50">
-          {toast}
-        </div>
+      <Toast message={toast} />
+    </>
+  );
+}
+
+// Moldura: cabeçalho, escolha de "de quem são os dados" e diálogos da conta.
+function AppShell() {
+  const { currentUser, signOut, members, refreshMembers, sharedSpaces, spacesReady } = useAuth();
+  const [viewingId, setViewingId] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [dialog, setDialog] = useState(null); // "users" | "password"
+  const isAdmin = currentUser.role === "admin";
+  const storageKey = `contas:espaco:${currentUser.id}`;
+
+  useEffect(() => {
+    if (isAdmin) refreshMembers();
+  }, [isAdmin, refreshMembers]);
+
+  // Espaços que a pessoa pode escolher: admin = todas as pessoas aprovadas; demais = quem compartilhou com ela.
+  const spaces = useMemo(
+    () => (isAdmin ? members.filter((m) => m.approved !== false && m.id !== currentUser.id).map((m) => ({ id: m.id, name: m.name })) : sharedSpaces),
+    [isAdmin, members, sharedSpaces, currentUser.id]
+  );
+
+  // Escolha inicial: a última usada (se ainda existir); senão, quem recebeu um espaço compartilhado começa nele; senão, o próprio.
+  useEffect(() => {
+    if (viewingId || !spacesReady) return;
+    const saved = safeGet(storageKey);
+    const valid = saved && (saved === currentUser.id || spaces.some((s) => s.id === saved));
+    setViewingId(valid ? saved : !isAdmin && spaces.length ? spaces[0].id : currentUser.id);
+  }, [viewingId, spacesReady, spaces, isAdmin, currentUser.id, storageKey]);
+
+  const switchSpace = (id) => {
+    flushPending(); // grava o que estava na fila antes de trocar de espaço
+    safeSet(storageKey, id);
+    setViewingId(id);
+  };
+
+  if (!viewingId) return <Splash />;
+
+  return (
+    <div className="min-h-dvh">
+      <Header user={currentUser} onReload={() => setReloadKey((k) => k + 1)} onUsers={() => setDialog("users")} onPassword={() => setDialog("password")} onSignOut={signOut} />
+      <SpaceBar me={currentUser} spaces={spaces} viewingId={viewingId} isAdmin={isAdmin} onChange={switchSpace} />
+      <Workspace key={`${viewingId}:${reloadKey}`} ownerId={viewingId} />
+
+      {dialog === "users" && (
+        <Modal title="Usuários" onClose={() => setDialog(null)} width="max-w-lg">
+          <UserManager />
+        </Modal>
+      )}
+      {dialog === "password" && (
+        <Modal title="Trocar senha" onClose={() => setDialog(null)}>
+          <ChangePasswordForm onDone={() => setDialog(null)} />
+        </Modal>
       )}
     </div>
   );
 }
 
 export default function App() {
-  const { currentUser, loading } = useAuth();
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <OwlMark size={64} />
-      </div>
-    );
-  }
-  return currentUser ? <AppShell /> : <LoginScreen />;
+  const { loading, currentUser, profileMissing, recovery } = useAuth();
+
+  if (!supabaseConfigured) return <MissingConfigScreen />;
+  if (recovery) return <ResetPasswordScreen />;
+  if (loading) return <Splash />;
+  if (profileMissing) return <ProfileMissingScreen />;
+  if (!currentUser) return <LoginScreen />;
+  if (!currentUser.approved) return <PendingApprovalScreen />;
+  return <AppShell />;
 }
