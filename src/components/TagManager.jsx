@@ -1,87 +1,72 @@
 import { useState } from "react";
-import { TAG_PALETTE, tagDot } from "../tagColors";
-import { makeTag } from "../data/initialData";
+import { Trash2 } from "lucide-react";
+import { TAG_PALETTE, tagDot } from "../lib/tagColors";
+import { Button, IconButton, inputCls } from "./ui";
+import { useConfirm } from "./Confirm";
 
-export default function TagManager({ tab, tags, onChange, onClose }) {
+export default function TagManager({ tags, usage, onAdd, onUpdate, onRemove }) {
   const [newName, setNewName] = useState("");
+  const confirm = useConfirm();
 
-  const updateTag = (id, fields) => onChange(tags.map((t) => (t.id === id ? { ...t, ...fields } : t)), { id, fields });
-  const removeTag = (id) => onChange(tags.filter((t) => t.id !== id), { removedId: id });
-  const addTag = () => {
-    if (!newName.trim()) return;
-    const usedColors = tags.map((t) => t.color);
-    const freeColor = TAG_PALETTE.find((c) => !usedColors.includes(c.key))?.key ?? TAG_PALETTE[0].key;
-    const tag = makeTag(tab, newName.trim(), freeColor);
-    onChange([...tags, tag], { created: tag });
+  const add = () => {
+    const name = newName.trim();
+    if (!name) return;
+    const used = tags.map((t) => t.color);
+    const free = TAG_PALETTE.find((c) => !used.includes(c.key))?.key ?? TAG_PALETTE[tags.length % TAG_PALETTE.length].key;
+    onAdd(name, free);
     setNewName("");
   };
 
-  return (
-    <div className="rounded-xl border border-ink-600 bg-ink-800/80 p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-mist-100">Categorias de quem paga</h3>
-        <button onClick={onClose} className="text-xs text-mist-300 hover:text-mist-100">
-          Fechar
-        </button>
-      </div>
-      <p className="text-xs text-mist-300">
-        Renomeie como quiser (nomes, iniciais, apelidos) e escolha uma cor para cada pessoa ou grupo.
-      </p>
+  const remove = async (tag) => {
+    const n = usage[tag.id] || 0;
+    const msg = n
+      ? `Remover “${tag.name}”? ${n} conta${n === 1 ? "" : "s"} vai ficar sem responsável.`
+      : `Remover a categoria “${tag.name}”?`;
+    if (await confirm({ title: "Remover categoria?", message: msg, confirmLabel: "Remover", danger: true })) onRemove(tag.id);
+  };
 
-      <div className="flex flex-col gap-2">
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-xs leading-relaxed text-mist-300">Renomeie como quiser (nomes, iniciais, apelidos) e escolha uma cor para cada pessoa ou grupo.</p>
+
+      <ul className="flex flex-col gap-3">
         {tags.map((tag) => (
-          <div key={tag.id} className="flex items-center gap-2">
-            <input
-              type="text"
-              value={tag.name}
-              onChange={(e) => updateTag(tag.id, { name: e.target.value })}
-              className="flex-1 min-w-0 rounded-md bg-ink-800 border border-ink-600 px-2 py-1.5 text-sm text-mist-100 focus:outline-none focus:ring-1 focus:ring-signal-blue focus:border-signal-blue"
-            />
-            <div className="flex items-center gap-1">
+          <li key={tag.id} className="flex flex-col gap-2 rounded-xl border border-ink-600 bg-ink-700/40 p-2.5">
+            <div className="flex items-center gap-2">
+              <input type="text" aria-label="Nome da categoria" maxLength={40} value={tag.name} onChange={(e) => onUpdate(tag.id, { name: e.target.value })} className={inputCls} />
+              <IconButton label={`Remover ${tag.name}`} onClick={() => remove(tag)} className="hover:!bg-signal-rose/10 hover:!text-signal-rose">
+                <Trash2 size={16} />
+              </IconButton>
+            </div>
+            <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Cor">
               {TAG_PALETTE.map((c) => (
                 <button
                   key={c.key}
                   type="button"
-                  title={c.key}
-                  onClick={() => updateTag(tag.id, { color: c.key })}
-                  className={[
-                    "h-5 w-5 rounded-full border-2 transition-transform",
-                    tagDot(c.key),
-                    tag.color === c.key ? "border-mist-50 scale-110" : "border-transparent opacity-60",
-                  ].join(" ")}
+                  aria-label={c.key}
+                  aria-pressed={tag.color === c.key}
+                  onClick={() => onUpdate(tag.id, { color: c.key })}
+                  className={`h-6 w-6 rounded-full border-2 transition-transform ${tagDot(c.key)} ${tag.color === c.key ? "scale-110 border-mist-50" : "border-transparent opacity-60 hover:opacity-100"}`}
                 />
               ))}
             </div>
-            <button
-              type="button"
-              onClick={() => removeTag(tag.id)}
-              title="Remover categoria"
-              className="h-7 w-7 inline-flex items-center justify-center rounded-md text-mist-300 hover:text-signal-rose hover:bg-signal-rose/10 transition-colors"
-            >
-              ×
-            </button>
-          </div>
+          </li>
         ))}
-        {tags.length === 0 && <p className="text-xs text-mist-300/60 italic">Nenhuma categoria ainda.</p>}
-      </div>
+        {tags.length === 0 && <li className="text-xs italic text-mist-400">Nenhuma categoria ainda.</li>}
+      </ul>
 
-      <div className="flex items-center gap-2 pt-1 border-t border-ink-700">
-        <input
-          type="text"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && addTag()}
-          placeholder="Nova categoria (ex: João, Casa, Sócios)"
-          className="flex-1 min-w-0 rounded-md bg-ink-800 border border-ink-600 px-2 py-1.5 text-sm text-mist-100 placeholder-mist-300/40 focus:outline-none focus:ring-1 focus:ring-signal-blue focus:border-signal-blue mt-2"
-        />
-        <button
-          type="button"
-          onClick={addTag}
-          className="mt-2 rounded-md bg-signal-blue px-3 py-1.5 text-sm font-medium text-ink-950 hover:bg-signal-blue/90 transition-colors"
-        >
+      <form
+        className="flex items-center gap-2 border-t border-ink-600 pt-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          add();
+        }}
+      >
+        <input type="text" aria-label="Nova categoria" maxLength={40} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nova categoria (ex.: João, Casa, Sócios)" className={inputCls} />
+        <Button type="submit" variant="primary">
           Adicionar
-        </button>
-      </div>
+        </Button>
+      </form>
     </div>
   );
 }

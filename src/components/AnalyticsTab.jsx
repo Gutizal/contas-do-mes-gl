@@ -1,169 +1,190 @@
 import { useMemo, useState } from "react";
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  PieChart,
-  Pie,
-  Cell,
-  LineChart,
-  Line,
-  Legend,
-} from "recharts";
-import { effectiveValue, fmtBRL, isVariable } from "../utils";
-import { sortMonthKeys, monthKeyShort } from "../monthUtils";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CalendarClock, CircleCheck, Clock3, CreditCard, Gauge, Sigma, Trophy, TrendingUp } from "lucide-react";
+import StatCard from "./StatCard";
+import { Card } from "./ui";
+import { effectiveValue, historyStats, installmentsOutlook, monthlyTotals, summarize, totalsByTag } from "../lib/calc";
+import { fmtBRL, fmtCompactBRL, fmtPct, plural } from "../lib/format";
+import { monthKeyLabel, monthKeyShort } from "../lib/months";
+import { NO_TAG_HEX, tagHex } from "../lib/tagColors";
 
-const HEX = { blue: "#3E7BFA", rose: "#E85D75", violet: "#8C7CF0", teal: "#22B8A6", amber: "#E8A33D" };
+const AXIS = { fill: "#8694AD", fontSize: 11 };
+const TOOLTIP = { backgroundColor: "#0F1623", border: "1px solid #2A3853", borderRadius: 10, color: "#DCE4F0", fontSize: 12 };
+const SCOPES = [
+  ["ambos", "Pessoal + Empresa"],
+  ["pessoal", "Pessoal"],
+  ["empresa", "Empresa"],
+];
 
-function StatCard({ label, value, sub }) {
+const Empty = ({ children }) => <p className="py-10 text-center text-sm text-mist-400">{children}</p>;
+
+function ChartCard({ title, subtitle, children }) {
   return (
-    <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-3 sm:p-4 flex flex-col gap-1 min-w-0">
-      <span className="text-xs text-mist-300 truncate">{label}</span>
-      <span className="text-lg sm:text-xl font-mono font-semibold text-mist-50 break-words">{value}</span>
-      {sub && <span className="text-xs text-mist-300/80 truncate">{sub}</span>}
-    </div>
+    <Card className="min-w-0 p-4">
+      <h3 className="font-display text-sm font-bold text-mist-50">{title}</h3>
+      {subtitle && <p className="mb-3 text-xs text-mist-400">{subtitle}</p>}
+      {!subtitle && <div className="mb-3" />}
+      {children}
+    </Card>
   );
 }
 
-const TOOLTIP_STYLE = {
-  backgroundColor: "#111A2E",
-  border: "1px solid #2A3655",
-  borderRadius: 8,
-  color: "#DDE3F2",
-  fontSize: 12,
-};
+export default function AnalyticsTab({ data, monthKey, monthKeys }) {
+  const [scope, setScope] = useState("ambos");
 
-export default function AnalyticsTab({ datasets, selectedMonth }) {
-  const [scope, setScope] = useState("ambos"); // pessoal | empresa | ambos
+  const tabs = scope === "ambos" ? ["pessoal", "empresa"] : [scope];
+  const bills = useMemo(() => tabs.flatMap((t) => data[t].months[monthKey] || []), [data, monthKey, scope]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tags = useMemo(() => tabs.flatMap((t) => data[t].tags), [data, scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const billsFor = (tabKey, monthKey) => datasets[tabKey].months[monthKey] || [];
+  const s = useMemo(() => summarize(bills), [bills]);
+  const parcelas = useMemo(() => installmentsOutlook(bills, monthKey), [bills, monthKey]);
 
-  const bills = useMemo(() => {
-    if (scope === "pessoal") return billsFor("pessoal", selectedMonth);
-    if (scope === "empresa") return billsFor("empresa", selectedMonth);
-    return [...billsFor("pessoal", selectedMonth), ...billsFor("empresa", selectedMonth)];
-  }, [scope, datasets, selectedMonth]);
+  const byTag = useMemo(
+    () => totalsByTag(bills, tags).filter((r) => r.total > 0).map((r) => ({ name: r.tag ? r.tag.name : "Sem responsável", value: r.total, color: r.tag ? tagHex(r.tag.color) : NO_TAG_HEX })),
+    [bills, tags]
+  );
 
-  const tags = useMemo(() => {
-    const map = new Map();
-    [...datasets.pessoal.tags, ...datasets.empresa.tags].forEach((t) => map.set(t.id, t));
-    return [...map.values()];
-  }, [datasets]);
+  const topBills = useMemo(
+    () => bills.map((b) => ({ name: b.description || "sem nome", valor: effectiveValue(b) })).sort((a, b) => b.valor - a.valor).slice(0, 8),
+    [bills]
+  );
 
-  const total = bills.reduce((sum, b) => sum + effectiveValue(b), 0);
-  const media = bills.length ? total / bills.length : 0;
-  const maior = bills.reduce((max, b) => (effectiveValue(b) > effectiveValue(max || {}) ? b : max), null);
-  const variaveis = bills.filter(isVariable).length;
+  const history = useMemo(() => monthlyTotals(data, monthKeys), [data, monthKeys]);
+  const historyChart = history.map((m) => ({ label: monthKeyShort(m.key), Pessoal: m.pessoal, Empresa: m.empresa }));
+  const field = scope === "ambos" ? "total" : scope;
+  const stats = useMemo(() => historyStats(history, field), [history, field]);
+  const thisMonth = history.find((m) => m.key === monthKey);
+  const vsAverage = stats && thisMonth && stats.average > 0 ? ((thisMonth[field] - stats.average) / stats.average) * 100 : null;
 
-  const byTag = tags
-    .map((t) => ({ name: t.name, value: bills.filter((b) => b.tagId === t.id).reduce((s, b) => s + effectiveValue(b), 0), color: HEX[t.color] || HEX.blue }))
-    .filter((t) => t.value > 0);
-
-  const byBill = [...bills]
-    .map((b) => ({ name: b.description || "sem nome", valor: effectiveValue(b) }))
-    .sort((a, b) => b.valor - a.valor)
-    .slice(0, 8);
-
-  const allMonthKeys = sortMonthKeys([...new Set([...Object.keys(datasets.pessoal.months), ...Object.keys(datasets.empresa.months)])]);
-  const historyChart = allMonthKeys.map((k) => ({
-    label: monthKeyShort(k),
-    pessoal: (datasets.pessoal.months[k] || []).reduce((s, b) => s + effectiveValue(b), 0),
-    empresa: (datasets.empresa.months[k] || []).reduce((s, b) => s + effectiveValue(b), 0),
-  }));
+  const series = [
+    { key: "Pessoal", color: "#3DD8F2", show: scope !== "empresa" },
+    { key: "Empresa", color: "#9484F2", show: scope !== "pessoal" },
+  ].filter((x) => x.show);
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex items-center gap-1 rounded-lg bg-ink-800 border border-ink-600 p-1">
-          {[
-            { key: "ambos", label: "Pessoal + Empresa" },
-            { key: "pessoal", label: "Pessoal" },
-            { key: "empresa", label: "Empresa" },
-          ].map((s) => (
+        <div className="inline-flex items-center gap-1 rounded-xl border border-ink-600 bg-ink-800/70 p-1" role="tablist">
+          {SCOPES.map(([key, label]) => (
             <button
-              key={s.key}
-              onClick={() => setScope(s.key)}
-              className={[
-                "px-3 py-1.5 text-xs font-medium rounded-md transition-colors",
-                scope === s.key ? "bg-signal-blue text-ink-950" : "text-mist-300 hover:text-mist-100",
-              ].join(" ")}
+              key={key}
+              role="tab"
+              aria-selected={scope === key}
+              onClick={() => setScope(key)}
+              className={`h-8 rounded-lg px-3 text-xs font-medium transition-colors ${scope === key ? "bg-owl-400 text-ink-950" : "text-mist-300 hover:text-mist-100"}`}
             >
-              {s.label}
+              {label}
             </button>
           ))}
         </div>
-        <span className="text-xs text-mist-300">Mostrando o mês selecionado nas abas Pessoal e Empresa</span>
+        <span className="text-xs text-mist-400">Mês selecionado: {monthKeyLabel(monthKey)}</span>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
-        <StatCard label="Total considerado" value={fmtBRL(total)} sub={`${bills.length} conta${bills.length === 1 ? "" : "s"}`} />
-        <StatCard label="Média por conta" value={fmtBRL(media)} />
-        <StatCard label="Maior conta" value={maior ? fmtBRL(effectiveValue(maior)) : "não definido"} sub={maior?.description || ""} />
-        <StatCard label="Contas com valor variável" value={String(variaveis)} sub={`de ${bills.length} no total`} />
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
+        <StatCard icon={Sigma} label="Total do mês" value={fmtBRL(s.total)} accent="owl" sub={plural(s.count, "conta", "contas")} />
+        <StatCard icon={Gauge} label="Andamento" value={fmtPct(s.pctPaid)} sub={`pago ${fmtBRL(s.paid)}`} accent="green" />
+        <StatCard icon={Clock3} label="Ainda pendente" value={fmtBRL(s.pending)} accent="amber" sub={plural(s.pendingCount, "conta", "contas")} />
+        <StatCard icon={CircleCheck} label="Já pago" value={fmtBRL(s.paid)} accent="green" sub={`${s.paidCount} de ${s.count}`} />
+        <StatCard icon={Trophy} label="Maior conta" value={s.biggest ? fmtBRL(effectiveValue(s.biggest)) : "—"} sub={s.biggest?.description || ""} />
+        <StatCard icon={Sigma} label="Média por conta" value={fmtBRL(s.average)} sub={`${s.variableCount} com valor variável`} />
+        <StatCard
+          icon={CreditCard}
+          label="Parcelas por vir"
+          value={parcelas.count ? fmtBRL(parcelas.afterThisMonth) : "—"}
+          sub={parcelas.count ? `${plural(parcelas.count, "conta parcelada", "contas parceladas")} · fim ${monthKeyShort(parcelas.lastMonthKey)}` : "nenhuma parcela"}
+        />
+        <StatCard
+          icon={TrendingUp}
+          label="Média dos meses"
+          value={stats ? fmtBRL(stats.average) : "—"}
+          sub={vsAverage === null ? "precisa de mais de um mês" : `este mês está ${fmtPct(Math.abs(vsAverage), 1)} ${vsAverage >= 0 ? "acima" : "abaixo"}`}
+          accent={vsAverage === null ? "default" : vsAverage > 0 ? "rose" : "green"}
+        />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 min-w-0">
-        <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4 min-w-0">
-          <h3 className="text-sm font-medium text-mist-100 mb-3">Por responsável</h3>
+      <div className="grid min-w-0 gap-4 md:grid-cols-2">
+        <ChartCard title="Por responsável" subtitle="Quanto cada um paga neste mês">
           {byTag.length ? (
-            <ResponsiveContainer width="100%" height={230}>
+            <ResponsiveContainer width="100%" height={240}>
               <PieChart>
-                <Pie data={byTag} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={3}>
-                  {byTag.map((entry, i) => (
-                    <Cell key={i} fill={entry.color} stroke="#111A2E" />
+                <Pie data={byTag} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88} paddingAngle={3} stroke="#0F1623">
+                  {byTag.map((e, i) => (
+                    <Cell key={i} fill={e.color} />
                   ))}
                 </Pie>
-                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => fmtBRL(v)} />
-                <Legend wrapperStyle={{ fontSize: 12, color: "#B4BDD6" }} />
+                <Tooltip contentStyle={TOOLTIP} formatter={(v) => fmtBRL(v)} />
+                <Legend wrapperStyle={{ fontSize: 12, color: "#B3BFD3" }} />
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <p className="text-sm text-mist-300/70 py-10 text-center">Sem categorias com valor ainda.</p>
+            <Empty>Sem contas com valor neste mês.</Empty>
           )}
-        </div>
+        </ChartCard>
 
-        <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4 min-w-0">
-          <h3 className="text-sm font-medium text-mist-100 mb-3">Maiores contas</h3>
-          {byBill.length ? (
-            <ResponsiveContainer width="100%" height={230}>
-              <BarChart data={byBill} layout="vertical" margin={{ left: 10, right: 20 }}>
-                <CartesianGrid stroke="#182238" horizontal={false} />
-                <XAxis type="number" tick={{ fill: "#8B96B3", fontSize: 11 }} tickFormatter={(v) => fmtBRL(v)} />
-                <YAxis type="category" dataKey="name" width={100} tick={{ fill: "#B4BDD6", fontSize: 11 }} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => fmtBRL(v)} />
-                <Bar dataKey="valor" fill="#3E7BFA" radius={[0, 4, 4, 0]} />
+        <ChartCard title="Maiores contas" subtitle="As 8 maiores do mês">
+          {topBills.length ? (
+            <ResponsiveContainer width="100%" height={240}>
+              <BarChart data={topBills} layout="vertical" margin={{ left: 0, right: 16 }}>
+                <CartesianGrid stroke="#1D2940" horizontal={false} />
+                <XAxis type="number" tick={AXIS} tickFormatter={fmtCompactBRL} />
+                <YAxis type="category" dataKey="name" width={96} tick={{ ...AXIS, fill: "#B3BFD3" }} />
+                <Tooltip contentStyle={TOOLTIP} formatter={(v) => fmtBRL(v)} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                <Bar dataKey="valor" name="Valor" fill="#3DD8F2" radius={[0, 5, 5, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <p className="text-sm text-mist-300/70 py-10 text-center">Adicione contas para ver o gráfico.</p>
+            <Empty>Adicione contas para ver o gráfico.</Empty>
           )}
-        </div>
+        </ChartCard>
       </div>
 
-      <div className="rounded-xl border border-ink-600 bg-ink-800/60 p-4 min-w-0">
-        <h3 className="text-sm font-medium text-mist-100 mb-3">Comparação entre os meses criados</h3>
-        {historyChart.length > 1 ? (
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={historyChart}>
-              <CartesianGrid stroke="#182238" vertical={false} />
-              <XAxis dataKey="label" tick={{ fill: "#8B96B3", fontSize: 11 }} />
-              <YAxis tick={{ fill: "#8B96B3", fontSize: 11 }} tickFormatter={(v) => fmtBRL(v)} width={80} />
-              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => fmtBRL(v)} />
-              <Legend wrapperStyle={{ fontSize: 12, color: "#B4BDD6" }} />
-              <Line type="monotone" dataKey="pessoal" name="Pessoal" stroke="#3E7BFA" strokeWidth={2} dot={{ r: 3 }} />
-              <Line type="monotone" dataKey="empresa" name="Empresa" stroke="#22B8A6" strokeWidth={2} dot={{ r: 3 }} />
-            </LineChart>
+      {parcelas.months.length > 1 && (
+        <ChartCard title="Parcelas nos próximos meses" subtitle="O que ainda vai ser cobrado das contas parceladas (mesmo valor em todos os meses)">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={parcelas.months.map((m) => ({ label: monthKeyShort(m.monthKey), Parcelas: m.total }))}>
+              <CartesianGrid stroke="#1D2940" vertical={false} />
+              <XAxis dataKey="label" tick={AXIS} />
+              <YAxis tick={AXIS} tickFormatter={fmtCompactBRL} width={64} />
+              <Tooltip contentStyle={TOOLTIP} formatter={(v) => fmtBRL(v)} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+              <Bar dataKey="Parcelas" fill="#9484F2" radius={[5, 5, 0, 0]} />
+            </BarChart>
           </ResponsiveContainer>
+        </ChartCard>
+      )}
+
+      <ChartCard title="Evolução mês a mês" subtitle="Total considerado em cada mês criado">
+        {historyChart.length > 1 ? (
+          <>
+            <ResponsiveContainer width="100%" height={250}>
+              <LineChart data={historyChart}>
+                <CartesianGrid stroke="#1D2940" vertical={false} />
+                <XAxis dataKey="label" tick={AXIS} />
+                <YAxis tick={AXIS} tickFormatter={fmtCompactBRL} width={64} />
+                <Tooltip contentStyle={TOOLTIP} formatter={(v) => fmtBRL(v)} />
+                <Legend wrapperStyle={{ fontSize: 12, color: "#B3BFD3" }} />
+                {series.map((x) => (
+                  <Line key={x.key} type="monotone" dataKey={x.key} stroke={x.color} strokeWidth={2.5} dot={{ r: 3 }} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+            {stats && (
+              <div className="mt-3 grid grid-cols-1 gap-2 border-t border-ink-600 pt-3 text-xs text-mist-300 sm:grid-cols-3">
+                <span className="flex items-center gap-1.5">
+                  <CalendarClock size={13} /> Mais caro: <strong className="text-mist-50">{monthKeyShort(stats.max.key)}</strong> · {fmtBRL(stats.max[field])}
+                </span>
+                <span>
+                  Mais barato: <strong className="text-mist-50">{monthKeyShort(stats.min.key)}</strong> · {fmtBRL(stats.min[field])}
+                </span>
+                <span>
+                  Média em {plural(stats.months, "mês", "meses")}: <strong className="text-mist-50">{fmtBRL(stats.average)}</strong>
+                </span>
+              </div>
+            )}
+          </>
         ) : (
-          <p className="text-sm text-mist-300/70 py-10 text-center">
-            Crie mais de um mês nas abas Pessoal ou Empresa (botão "+ Novo mês") para comparar a evolução entre eles.
-          </p>
+          <Empty>Crie mais de um mês (setas no topo das abas Pessoal e Empresa) para comparar a evolução.</Empty>
         )}
-      </div>
+      </ChartCard>
     </div>
   );
 }
